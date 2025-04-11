@@ -1,31 +1,84 @@
 name: CI Pipeline
 
-on: [push, pull_request]
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      db:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wallet_testing
+          MYSQL_USER: wallet_user
+          MYSQL_PASSWORD: root
+        ports:
+          - 3307:3306
+        networks:
+          - laravel
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        networks:
+          - laravel
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v2
 
-      - name: Set up PHP
+      - name: Set up PHP 8.1
         uses: shivammathur/setup-php@v2
         with:
           php-version: 8.1
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-suggest
+        run: |
+          composer install --prefer-dist --no-progress --no-suggest
 
       - name: Run Tests
         run: vendor/bin/phpunit
 
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse
+        run: vendor/bin/phpstan analyse --level=max
 
       - name: Run PHPMD
-        run: vendor/bin/phpmd app text cleancode,design,naming
+        run: vendor/bin/phpmd app text cleancode,design,naming --exclude=*/tests/*
 
       - name: Run PHP-CS-Fixer
-        run: vendor/bin/php-cs-fixer fix --dry-run --diff
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff --rules=@PSR2
+
+      - name: Set up .env for testing
+        run: |
+          cp .env.example .env
+          sed -i 's/DB_CONNECTION=mysql/DB_CONNECTION=mysql_testing/' .env
+          sed -i 's/DB_DATABASE=wallet/DB_DATABASE=wallet_testing/' .env
+          sed -i 's/DB_PORT=3306/DB_PORT=3307/' .env
+
+      - name: Run database migrations
+        run: |
+          php artisan migrate --env=testing
+          php artisan db:seed --env=testing
+
+      - name: Run Tests after migrations
+        run: vendor/bin/phpunit
+
+    networks:
+      - laravel
+
+volumes:
+  dbdata:
+    driver: local
+
+networks:
+  laravel:
+    driver: bridge
